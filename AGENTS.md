@@ -20,14 +20,14 @@ Eerste rollout (eenmalig):
 
 1. Back-up serverconfig (unieke namen!): `cp -av /usr/share/z-push/config.php ~/zpush-config-backup/config.php` en `cp -av /usr/share/z-push/backend/jmap/config.php ~/zpush-config-backup/jmap_config.php`
 2. `git clone -b develop https://github.com/reinierjh/Z-Push-stalwart-jmap.git /opt/z-push-git`
-3. `rsync -a --delete --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
+3. `rsync -a --delete --chown=www-data:www-data --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
 4. Controle: `cmp /usr/share/z-push/config.php ~/zpush-config-backup/config.php` en `cmp /usr/share/z-push/backend/jmap/config.php ~/zpush-config-backup/jmap_config.php` (beide moeten OK zijn).
 5. `sudo systemctl restart php8.2-fpm`.
 
 Elke volgende update:
 
 1. `cd /opt/z-push-git && git pull`
-2. `rsync -a --delete --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
+2. `rsync -a --delete --chown=www-data:www-data --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
 3. `sudo systemctl restart php8.2-fpm`
 
 ## Project-achtergrond
