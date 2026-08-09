@@ -35,3 +35,11 @@ Elke volgende update:
 - Z-Push met JMAP-backend tegen Stalwart.
 - Bekende fix: raw MIME alleen leveren als `mimeIsClean()`; anders `buildCleanMime()` (UTF-8 MIME uit JMAP bodyValues). Zie `src/backend/jmap/jmap.php`.
 - Linten kan met `php -l <file>` (of de gegenereerde lint-run vanuit de repo).
+
+## Contributen (upstream Z-Push regels)
+
+- PRs en issues indienen via https://github.com/Z-Hub/Z-Push (of de desbetreffende fork-keten).
+- Alle bijdragen vallen onder AGPLv3. Bij elke PR expliciet en publiekelijk één van deze verklaringen opnemen:
+  - `Released under the GNU Affero General Public License (AGPL), version 3.`
+  - `Released under the GNU Affero General Public License (AGPL), version 3 and Trademark Additional Terms.`
+- Code of Conduct van Z-Push nazien.
