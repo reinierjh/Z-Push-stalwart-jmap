@@ -14,10 +14,21 @@ Alle wijzigingen lopen via git — nooit direct via scp of andere methodes.
 
 ## Deploy
 
-Deploy gebeurt via git, niet via scp:
+Deploy gebeurt via git, niet via scp. Let op: de repo heeft alles onder `src/`, de server-boom staat plat in `/usr/share/z-push` (zonder `src/`-pad). Deploy is dus: pull in een aparte clone + `rsync` van `src/` naar de server-boom, met de twee config-bestanden uitgesloten.
 
-1. Op de server: `git pull` in de checkout.
-2. En dan: `sudo systemctl restart php8.2-fpm`.
+Eerste rollout (eenmalig):
+
+1. Back-up serverconfig: `cp -av /usr/share/z-push/config.php ~/zpush-config-backup/` en idem `backend/jmap/config.php`.
+2. `git clone -b develop https://github.com/reinierjh/Z-Push-stalwart-jmap.git /opt/z-push-git`
+3. `rsync -a --delete --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
+4. Controle: `cmp` op beide config-bestanden tegen de back-up (moet OK zijn).
+5. `sudo systemctl restart php8.2-fpm`.
+
+Elke volgende update:
+
+1. `cd /opt/z-push-git && git pull`
+2. `rsync -a --delete --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
+3. `sudo systemctl restart php8.2-fpm`
 
 ## Project-achtergrond
 
