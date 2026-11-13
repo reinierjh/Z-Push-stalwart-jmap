@@ -477,7 +477,10 @@ class JmapContactConverter {
             $key .= '|cat:' . $cat;
         }
         if (!empty($card['media'])) {
-            $key .= '|media:' . count($card['media']);
+            // Photo replacements can keep the same map size and updated time.
+            $media = $card['media'];
+            ksort($media);
+            $key .= '|media:' . json_encode($media);
         }
         foreach (($card['children'] ?? []) as $child) {
             $key .= '|child:' . $child;
