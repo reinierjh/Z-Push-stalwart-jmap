@@ -1353,14 +1353,16 @@ class BackendJmap extends BackendDiff {
 
         $output->asbody = new SyncBaseBody();
         $output->asbody->type = $bodyType;
-        if ($truncsize !== -1 && strlen($bodyData) > $truncsize) {
-            $bodyData = substr($bodyData, 0, $truncsize);
+        $output->asbody->estimatedDataSize = strlen($bodyData);
+        // Never cut MIME boundaries/signatures. Text truncation must not split
+        // a UTF-8 character (or an HTML tag).
+        if ($bodyType !== SYNC_BODYPREFERENCE_MIME && $truncsize !== -1 && strlen($bodyData) > $truncsize) {
+            $bodyData = Utils::Utf8_truncate($bodyData, $truncsize, $bodyType === SYNC_BODYPREFERENCE_HTML);
             $output->asbody->truncated = 1;
         } else {
             $output->asbody->truncated = 0;
         }
-        $output->asbody->estimatedDataSize = strlen($bodyData);
-        $output->asbody->data              = StringStreamWrapper::Open($bodyData);
+        $output->asbody->data = StringStreamWrapper::Open($bodyData, $bodyType === SYNC_BODYPREFERENCE_HTML);
 
         foreach ($email['attachments'] ?? [] as $att) {
             $blobId   = $att['blobId'] ?? '';
@@ -1403,88 +1405,152 @@ class BackendJmap extends BackendDiff {
     }
 
     private function selectBody(array $email, array $bodypreference): array {
+        $bodypreference = array_map('intval', $bodypreference);
+        $wantMime = in_array(SYNC_BODYPREFERENCE_MIME, $bodypreference, true);
+        $mime = null;
+        $downloaded = false;
+        if ($wantMime) {
+            $mime = $this->downloadEmailMime($email);
+            $downloaded = true;
+            if ($mime === null) {
+                // Without the original we cannot rule out a signature/encrypted
+                // envelope missing from JMAP attachment metadata. Retry later.
+                throw new StatusException('BackendJmap->selectBody(): original MIME unavailable', SYNC_STATUS_SERVERERROR);
+            }
+            if ($mime !== null && ($this->emailNeedsRawMime($email, $mime) || $this->mimeIsClean($mime))) {
+                return [SYNC_BODYPREFERENCE_MIME, $mime];
+            }
+        }
+
+        if (!array_key_exists('bodyValues', $email)) {
+            $email = array_merge($email, $this->fetchEmailWithBodies($email['id'] ?? ''));
+        }
         $bodyValues = $email['bodyValues'] ?? [];
-
-        if (in_array(SYNC_BODYPREFERENCE_MIME, $bodypreference, true) && !empty($email['blobId'])) {
-            $mime = '';
-            try {
-                $mime = $this->client->downloadBlob($email['blobId'], 'message.eml', 'message/rfc822');
-            } catch (\Throwable $e) {
-                ZLog::Write(LOGLEVEL_WARN, 'BackendJmap->selectBody(): MIME download failed: ' . $e->getMessage());
-            }
-            if ($mime !== '') {
-                // Serve the original raw MIME whenever it is well-formed, or when
-                // the message MUST stay byte-identical (S/MIME signed/encrypted,
-                // calendar invitations) so signatures/ICS survive verbatim.
-                if ($this->mimeIsClean($mime) || $this->emailNeedsRawMime($email)) {
-                    return [SYNC_BODYPREFERENCE_MIME, $mime];
-                }
-                // Legacy/broken encoding in the raw bytes (e.g. non-encoded 8-bit
-                // chars) breaks iOS import and triggers loop detection.  Rebuild a
-                // valid UTF-8 MIME from the clean JMAP header/body data instead.
-                $clean = $this->buildCleanMime($email);
-                if ($clean !== '') {
-                    ZLog::Write(LOGLEVEL_DEBUG, sprintf(
-                        'BackendJmap->selectBody(): rebuilt broken MIME for email %s (%d -> %d bytes)',
-                        $email['id'] ?? '?', strlen($mime), strlen($clean)
-                    ));
-                    return [SYNC_BODYPREFERENCE_MIME, $clean];
-                }
-            }
-            else {
-                ZLog::Write(LOGLEVEL_WARN, sprintf('BackendJmap->selectBody(): empty MIME blob for email %s, falling back to HTML/text', $email['id'] ?? '?'));
-            }
-            // MIME failed / not rebuildable and getEmail() skipped the body values:
-            // fetch them so the HTML/text fallback below still has data to render.
-            if (empty($bodyValues) && empty($email['htmlBody']) && empty($email['textBody'])) {
-                $full = $this->fetchEmailWithBodies($email['id'] ?? '');
-                if (!empty($full)) {
-                    $email = $full;
-                    $bodyValues = $email['bodyValues'] ?? [];
-                }
+        $text = $this->bodyPartValue($email, 'textBody', $bodyValues);
+        $html = $this->bodyPartValue($email, 'htmlBody', $bodyValues);
+        $hasBody = $text !== '' || $html !== '';
+        foreach (['textBody', 'htmlBody'] as $field) {
+            $partId = $email[$field][0]['partId'] ?? null;
+            if ($partId !== null && isset($bodyValues[$partId]['value'])
+                && empty($bodyValues[$partId]['isTruncated']) && empty($bodyValues[$partId]['isEncodingProblem'])) {
+                $hasBody = true; // A deliberately empty body is valid too.
             }
         }
 
-        // Prefer HTML if the client wants it, or if no specific preference (also used as
-        // fallback when MIME failed — we try HTML/text regardless of original preference).
-        $wantHtml = !$bodypreference
-            || in_array(SYNC_BODYPREFERENCE_HTML,  $bodypreference, true)
-            || in_array(SYNC_BODYPREFERENCE_MIME,  $bodypreference, true);
-        if ($wantHtml && !empty($email['htmlBody'])) {
-            $partId = $email['htmlBody'][0]['partId'] ?? null;
-            if ($partId && isset($bodyValues[$partId]['value'])) {
-                return [SYNC_BODYPREFERENCE_HTML, $bodyValues[$partId]['value']];
+        if (!$hasBody) {
+            if (!$downloaded) {
+                $mime = $this->downloadEmailMime($email);
             }
+            if ($mime === null) {
+                throw new StatusException('BackendJmap->selectBody(): message body unavailable', SYNC_STATUS_SERVERERROR);
+            }
+            [$text, $html] = $this->decodeMimeBodies($mime);
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf(
+                'BackendJmap->selectBody(): decoded MIME fallback for email %s (preferences=%s, text=%d, html=%d, protected=%d)',
+                $email['id'] ?? '?', implode(',', $bodypreference), strlen($text), strlen($html),
+                $this->emailNeedsRawMime($email, $mime) ? 1 : 0
+            ));
         }
 
-        if (!empty($email['textBody'])) {
-            $partId = $email['textBody'][0]['partId'] ?? null;
-            if ($partId && isset($bodyValues[$partId]['value'])) {
-                return [SYNC_BODYPREFERENCE_PLAIN, $bodyValues[$partId]['value']];
-            }
+        $text = $this->cleanBodyText($text);
+        $html = $this->cleanBodyText($html);
+        if ($wantMime) {
+            $clean = $this->buildCleanMime($email, $text, $html);
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf(
+                'BackendJmap->selectBody(): rebuilt MIME for email %s (%d bytes)',
+                $email['id'] ?? '?', strlen($clean)
+            ));
+            return [SYNC_BODYPREFERENCE_MIME, $clean];
         }
 
-        // bodyValues was empty or partIds didn't match — last resort: download raw MIME
+        // A raw blob is an input to decoding, not permission to send type 4.
+        // Opaque encrypted/attachment-only messages have an empty text preview;
+        // their original attachment blobs remain available through ActiveSync.
+        if (in_array(SYNC_BODYPREFERENCE_HTML, $bodypreference, true) || (!$bodypreference && $html !== '')) {
+            return [SYNC_BODYPREFERENCE_HTML, $html !== '' ? $html
+                : ($text !== '' ? '<pre>' . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</pre>' : '')];
+        }
+        if ($text === '' && $html !== '') {
+            $text = html_entity_decode(Utils::ConvertHtmlToText($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        }
+        return [SYNC_BODYPREFERENCE_PLAIN, $this->cleanBodyText($text)];
+    }
+
+    private function downloadEmailMime(array $email): ?string {
         if (!empty($email['blobId'])) {
             try {
                 $mime = $this->client->downloadBlob($email['blobId'], 'message.eml', 'message/rfc822');
-                if ($mime !== '') {
-                    ZLog::Write(LOGLEVEL_DEBUG, sprintf('BackendJmap->selectBody(): used MIME fallback for email %s', $email['id'] ?? '?'));
-                    return [SYNC_BODYPREFERENCE_MIME, $mime];
-                }
+                if ($mime !== '') return $mime;
             } catch (\Throwable $e) {
-                ZLog::Write(LOGLEVEL_WARN, 'BackendJmap->selectBody(): MIME fallback failed: ' . $e->getMessage());
+                ZLog::Write(LOGLEVEL_WARN, 'BackendJmap->selectBody(): MIME download failed: ' . $e->getMessage());
             }
         }
+        return null;
+    }
 
-        ZLog::Write(LOGLEVEL_WARN, sprintf(
-            'BackendJmap->selectBody(): no usable body for email %s (htmlBody=%d textBody=%d bodyValues=%d)',
-            $email['id'] ?? '?',
-            count($email['htmlBody'] ?? []),
-            count($email['textBody'] ?? []),
-            count($bodyValues)
-        ));
-        return [SYNC_BODYPREFERENCE_PLAIN, ''];
+    /**
+     * Use the bundled MIME parser for structure, but decode only displayable
+     * text parts. Do not treat text attachments or attached messages as bodies.
+     */
+    private function decodeMimeBodies(string $mime): array {
+        require_once __DIR__ . '/../../include/mimeDecode.php';
+        $decoder = new Mail_mimeDecode($mime);
+        $message = $decoder->decode([
+            'include_bodies' => true, 'decode_bodies' => false, 'decode_headers' => false,
+        ]);
+        if (!is_object($message)) {
+            throw new StatusException('BackendJmap->selectBody(): MIME decode failed', SYNC_STATUS_SERVERERROR);
+        }
+        $bodies = ['plain' => '', 'html' => ''];
+        $this->collectMimeBodies($message, $bodies);
+        return [$bodies['plain'], $bodies['html']];
+    }
+
+    private function collectMimeBodies(object $part, array &$bodies): void {
+        if (strtolower($part->disposition ?? '') === 'attachment'
+            || !empty($part->d_parameters['filename']) || !empty($part->ctype_parameters['name'])) {
+            return;
+        }
+        $primary = strtolower($part->ctype_primary ?? 'text');
+        $subtype = strtolower($part->ctype_secondary ?? 'plain');
+        if ($primary === 'multipart') {
+            foreach ($part->parts ?? [] as $child) {
+                $this->collectMimeBodies($child, $bodies);
+            }
+        } elseif ($primary === 'text' && array_key_exists($subtype, $bodies) && $bodies[$subtype] === '') {
+            $body = $part->body ?? '';
+            $encoding = strtolower($part->headers['content-transfer-encoding'] ?? '7bit');
+            if ($encoding === 'base64') {
+                $body = base64_decode($body, true);
+                if ($body === false) {
+                    throw new StatusException('BackendJmap->selectBody(): invalid MIME base64 body', SYNC_STATUS_SERVERERROR);
+                }
+            } elseif ($encoding === 'quoted-printable') {
+                $body = quoted_printable_decode($body);
+            }
+            $bodies[$subtype] = $this->cleanBodyText($body, $part->ctype_parameters['charset'] ?? '');
+        }
+    }
+
+    private function cleanBodyText(string $body, string $charset = ''): string {
+        $isUtf8 = preg_match('//u', $body) === 1;
+        if (($charset !== '' && !in_array(strtolower($charset), ['utf-8', 'utf8', 'us-ascii'], true)) || !$isUtf8) {
+            $source = $charset;
+            if ($source === '' || in_array(strtolower($source), ['utf-8', 'utf8', 'us-ascii'], true)) {
+                $source = 'Windows-1252';
+            }
+            try {
+                $converted = @iconv($source, 'UTF-8', $body);
+                if ($converted !== false) $body = $converted;
+            } catch (\Throwable) {
+                // Invalid charset labels must not break the sync response.
+            }
+        }
+        if (preg_match('//u', $body) !== 1) {
+            $body = @iconv('UTF-8', 'UTF-8//IGNORE', $body) ?: '';
+        }
+        // Unlike sanitizeText(), preserve HTML entities in HTML bodies.
+        return preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $body) ?? '';
     }
 
     /**
@@ -1503,53 +1569,52 @@ class BackendJmap extends BackendDiff {
     }
 
     /**
-     * Messages that must be delivered byte-identical and therefore never get
-     * rebuilt: S/MIME signed/encrypted (pkcs7) and calendar invitations.
+     * Messages whose MIME must remain byte-identical: signed/encrypted
+     * S/MIME or OpenPGP, and calendar invitations.
      */
-    private function emailNeedsRawMime(array $email): bool {
+    private function emailNeedsRawMime(array $email, string $mime = ''): bool {
         foreach ($email['attachments'] ?? [] as $a) {
             $t = strtolower($a['type'] ?? '');
-            if (str_contains($t, 'pkcs7') || $t === 'text/calendar') {
+            if (str_contains($t, 'pkcs7') || str_contains($t, 'pgp') || $t === 'text/calendar') {
                 return true;
             }
         }
-        return false;
+        // Attachment metadata alone misses top-level opaque S/MIME and some
+        // multipart signatures. Inspect Content-Type fields without modifying
+        // any signed bytes (including folded and nested MIME headers).
+        return preg_match(
+            '/(?:^|\r?\n)Content-Type:\s*(?:multipart\/(?:signed|encrypted)|application\/(?:x-)?(?:pkcs7-mime|pkcs7-signature|pgp-encrypted|pgp-signature)|text\/calendar)(?=[;\s]|$)/i',
+            $mime
+        ) === 1;
     }
 
     /**
      * Extract a text body part (textBody|htmlBody) as a clean UTF-8 string.
      * Prefers the decoded JMAP bodyValues; falls back to downloading the part
      * blob directly (the part itself is addressable by blobId in JMAP) and
-     * converting legacy 8-bit charsets (iso-8859-1) to UTF-8.
+     * converting the declared charset to UTF-8.
      */
     private function bodyPartValue(array $email, string $field, array $bodyValues): string {
         $part = $email[$field][0] ?? null;
         if (is_array($part)) {
             $partId = $part['partId'] ?? null;
-            if ($partId !== null && isset($bodyValues[$partId]['value'])) {
+            if ($partId !== null && isset($bodyValues[$partId]['value'])
+                && empty($bodyValues[$partId]['isTruncated']) && empty($bodyValues[$partId]['isEncodingProblem'])) {
                 return $bodyValues[$partId]['value'];
             }
             $blobId = $part['blobId'] ?? null;
             if ($blobId) {
-                return $this->bodyPartFromBlob($blobId);
+                return $this->bodyPartFromBlob($blobId, $part['charset'] ?? '');
             }
         }
-        // Some servers surface bodies only in bodyValues without part listing.
-        if (!$part && !empty($bodyValues)) {
-            foreach ($bodyValues as $val) {
-                if (isset($val['value']) && $val['value'] !== '') {
-                    return $val['value'];
-                }
-            }
-        }
+        // Unlisted bodyValues may belong to text attachments, not the body.
         return '';
     }
 
     /**
-     * Download a MIME body part blob and return it as clean UTF-8, converting
-     * legacy 8-bit (iso-8859-1) bytes if the raw data is not valid UTF-8.
+     * Download a transfer-decoded JMAP body part and convert its charset.
      */
-    private function bodyPartFromBlob(string $blobId): string {
+    private function bodyPartFromBlob(string $blobId, string $charset = ''): string {
         try {
             $raw = $this->client->downloadBlob($blobId, 'body', 'text/plain');
         } catch (\Throwable) {
@@ -1558,11 +1623,7 @@ class BackendJmap extends BackendDiff {
         if ($raw === '') {
             return '';
         }
-        if (preg_match('//u', $raw)) {
-            return $raw; // already clean UTF-8
-        }
-        $conv = @iconv('ISO-8859-1', 'UTF-8//IGNORE', $raw);
-        return is_string($conv) ? $conv : '';
+        return $this->cleanBodyText($raw, $charset);
     }
 
     /**
@@ -1571,31 +1632,14 @@ class BackendJmap extends BackendDiff {
      * headers are RFC2047-encoded, text parts are base64/UTF-8.  Regular
      * attachments are NOT embedded - they stay available via asattachments.
      */
-    private function buildCleanMime(array $email): string {
+    private function buildCleanMime(array $email, string $text, string $html): string {
         $id = $email['id'] ?? '';
         $full = $email;
-        if (empty($full['htmlBody']) && empty($full['textBody'])) {
-            $fetched = $this->fetchEmailWithBodies($id);
-            if (!empty($fetched)) {
-                $full = array_merge($email, $fetched);
-            }
-        }
-        $bodyValues = $full['bodyValues'] ?? [];
-
-        $text = $this->bodyPartValue($full, 'textBody', $bodyValues);
-        $html = $this->bodyPartValue($full, 'htmlBody', $bodyValues);
         ZLog::Write(LOGLEVEL_DEBUG, sprintf(
-            'BackendJmap->buildCleanMime(): email %s text/plain=%d text/html=%d bodyValues=%s',
+            'BackendJmap->buildCleanMime(): email %s text/plain=%d text/html=%d',
             $id,
-            strlen($text), strlen($html),
-            json_encode(array_keys($bodyValues))
+            strlen($text), strlen($html)
         ));
-        if ($text === '' && $html === '') {
-            ZLog::Write(LOGLEVEL_WARN, sprintf(
-                'BackendJmap->buildCleanMime(): could not obtain body text for email %s; not rebuilding', $id
-            ));
-            return '';
-        }
 
         $eol      = "\r\n";
         $boundary = '----=_zpush_' . bin2hex(random_bytes(16));
@@ -1619,7 +1663,7 @@ class BackendJmap extends BackendDiff {
         $headers[] = 'Content-Transfer-Encoding: 7bit';
 
         $body = '';
-        if ($text !== '') {
+        if ($text !== '' || $html === '') {
             $body .= '--' . $boundary . $eol
                    . 'Content-Type: text/plain; charset=UTF-8' . $eol
                    . 'Content-Transfer-Encoding: base64' . $eol . $eol
