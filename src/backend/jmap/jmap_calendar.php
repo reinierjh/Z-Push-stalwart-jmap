@@ -56,18 +56,31 @@ class JmapCalendarConverter {
         $locations = array_values($event['locations'] ?? []);
         if ($locations) $a->location = $locations[0]['name'] ?? null;
 
-        // Organizer + attendees
+        // JSCalendar bis uses calendarAddress URIs and an explicit organizer.
+        // Read legacy email/sendTo fields too, but never invent an organizer
+        // from the first attendee.
         $attendees  = [];
-        $foundOrg   = false;
+        $organizerEmail = self::calendarAddressToEmail($event['organizerCalendarAddress'] ?? '');
+        if ($organizerEmail === '') {
+            foreach ($event['participants'] ?? [] as $p) {
+                if (!empty($p['roles']['owner']) || !empty($p['roles']['organizer'])) {
+                    $organizerEmail = self::participantEmail($p);
+                    if ($organizerEmail !== '') break;
+                }
+            }
+        }
+        if ($organizerEmail !== '') {
+            $a->organizeremail = $organizerEmail;
+            $a->organizername = $organizerEmail;
+        }
         foreach ($event['participants'] ?? [] as $p) {
             $roles = $p['roles'] ?? [];
             $name  = $p['name']  ?? '';
-            $email = $p['email'] ?? $p['sendTo']['imip'] ?? '';
+            $email = self::participantEmail($p);
+            if ($email === '') continue;
 
-            if (isset($roles['organizer'])) {
-                $a->organizername  = $name;
-                $a->organizeremail = $email;
-                $foundOrg          = true;
+            if ($organizerEmail !== '' && strcasecmp($email, $organizerEmail) === 0) {
+                $a->organizername = $name ?: $organizerEmail;
             } else {
                 $att = new SyncAttendee();
                 $att->name  = $name;
@@ -89,23 +102,9 @@ class JmapCalendarConverter {
         }
         if ($attendees) {
             $a->attendees = $attendees;
-            // If no explicit organizer found, use the first attendee as organizer
-            // (Stalwart may not always store the organizer role)
-            if (!$foundOrg) {
-                $a->organizername  = $attendees[0]->name  ?? '';
-                $a->organizeremail = $attendees[0]->email ?? '';
-                if (empty($a->organizername) && empty($a->organizeremail)) {
-                    ZLog::Write(LOGLEVEL_WARN, sprintf(
-                        'JmapCalendarConverter: event "%s" has attendees but no organizer info at all',
-                        $event['title'] ?? $event['uid'] ?? '(unknown)'
-                    ));
-                }
-            }
-            // Only mark as meeting if we have a valid organizer email,
-            // otherwise iOS may reject the event
-            if (!empty($a->organizeremail)) {
-                $a->meetingstatus = 1;
-            }
+        }
+        if ($organizerEmail !== '') {
+            $a->meetingstatus = 1;
         }
 
         // Sensitivity
@@ -134,14 +133,15 @@ class JmapCalendarConverter {
         }
 
         // Recurrence
-        $rules = $event['recurrenceRules'] ?? [];
-        if ($rules) {
-            $a->recurrence = self::jmapRuleToSyncRecurrence($rules[0]);
+        $rule = $event['recurrenceRule'] ?? $event['recurrenceRules'][0] ?? null;
+        if (is_array($rule) && $rule) {
+            $a->recurrence = self::jmapRuleToSyncRecurrence($rule, $tz);
         }
 
-        // Categories (space-separated string for compatibility with all streamer mappings)
-        $cats = array_keys($event['categories'] ?? []);
-        if ($cats) $a->categories = implode(' ', $cats);
+        // Ordinary iCalendar CATEGORIES are JSCalendar keywords. The separate
+        // categories property contains concepts, not the user's text labels.
+        $cats = array_keys(array_filter($event['keywords'] ?? []));
+        if ($cats) $a->categories = $cats;
 
         return $a;
     }
@@ -150,7 +150,7 @@ class JmapCalendarConverter {
     // SyncAppointment → JSCalendar Event
     // -------------------------------------------------------------------------
 
-    public static function syncAppointmentToEvent(SyncAppointment $a, string $calendarId): array {
+    public static function syncAppointmentToEvent(SyncAppointment $a, string $calendarId, ?array $existing = null): array {
         $startTs = $a->starttime ?? time();
         $endTs   = $a->endtime   ?? ($startTs + 3600);
         $allDay  = !empty($a->alldayevent);
@@ -164,13 +164,25 @@ class JmapCalendarConverter {
 
         if ($allDay) {
             $event['showWithoutTime'] = true;
-            $event['start']           = gmdate('Y-m-d', $startTs);
+            $event['start']           = gmdate('Y-m-d\T00:00:00', $startTs);
             $event['duration']        = 'P' . max(1, intdiv($endTs - $startTs, 86400)) . 'D';
-            $event['timeZone']        = 'UTC';
+            $event['timeZone']        = null;
         } else {
-            $event['start']    = gmdate('Y-m-d\TH:i:s', $startTs);
+            // Keep an existing series in its local timezone, so editing it
+            // does not shift future occurrences when daylight saving changes.
+            $timeZone = $existing !== null ? ($existing['timeZone'] ?? null) : 'UTC';
+            try {
+                $tz = new \DateTimeZone($timeZone ?? 'UTC');
+            } catch (\Throwable) {
+                // Custom VTIMEZONE names may not be known to PHP. Keep the
+                // device's absolute timestamp rather than failing the update.
+                $timeZone = 'UTC';
+                $tz = new \DateTimeZone('UTC');
+            }
+            $event['start']    = (new \DateTimeImmutable('@' . $startTs))->setTimezone($tz)->format('Y-m-d\TH:i:s');
             $event['duration'] = self::secondsToDuration($endTs - $startTs);
-            $event['timeZone'] = 'UTC';
+            $event['timeZone'] = $timeZone;
+            $event['showWithoutTime'] = false;
         }
 
         // Location
@@ -197,23 +209,29 @@ class JmapCalendarConverter {
 
         // Organizer + attendees
         $participants = [];
-        if (!empty($a->organizeremail)) {
+        $organizerEmail = self::calendarAddressToEmail($a->organizeremail ?? '');
+        if ($organizerEmail !== '') {
+            $event['organizerCalendarAddress'] = 'mailto:' . $organizerEmail;
             $participants['org'] = [
                 '@type' => 'Participant',
-                'name'  => $a->organizername ?? $a->organizeremail,
-                'email' => $a->organizeremail,
-                'roles' => ['organizer' => true, 'attendee' => true],
+                'name'  => $a->organizername ?? $organizerEmail,
+                'calendarAddress' => 'mailto:' . $organizerEmail,
+                'roles' => ['owner' => true],
             ];
         }
         foreach ($a->attendees ?? [] as $i => $att) {
+            $email = self::calendarAddressToEmail($att->email ?? '');
+            if ($email === '' || ($organizerEmail !== '' && strcasecmp($email, $organizerEmail) === 0)) {
+                continue;
+            }
             $participants['att' . $i] = [
                 '@type'               => 'Participant',
                 'name'                => $att->name  ?? '',
-                'email'               => $att->email ?? '',
+                'calendarAddress'     => 'mailto:' . $email,
                 'roles'               => match((int)($att->attendeetype ?? 1)) {
                     2 => ['optional'      => true],
                     3 => ['informational' => true],
-                    default => ['attendee'  => true],
+                    default => ['required' => true],
                 },
                 'participationStatus' => match((int)($att->attendeestatus ?? 0)) {
                     3 => 'accepted',
@@ -223,7 +241,9 @@ class JmapCalendarConverter {
                 },
             ];
         }
-        if ($participants) $event['participants'] = $participants;
+        if ($participants) {
+            $event['participants'] = self::preserveParticipantIds($participants, $existing['participants'] ?? []);
+        }
 
         // Sensitivity
         $event['privacy'] = match((int)($a->sensitivity ?? 0)) {
@@ -256,19 +276,21 @@ class JmapCalendarConverter {
 
         // Recurrence
         if (!empty($a->recurrence)) {
-            $rule = self::syncRecurrenceToJmap($a->recurrence);
-            if ($rule) $event['recurrenceRules'] = [$rule];
+            $rule = self::syncRecurrenceToJmap($a->recurrence, $event['timeZone'] ?? 'UTC');
+            if ($rule) $event['recurrenceRule'] = $rule;
+        } elseif (isset($a->recurrence) || in_array('recurrence', $a->getUnsetVars() ?? [], true)) {
+            $event['recurrenceRule'] = null;
         }
 
-        // Categories (handle both space-separated string and array from device)
-        if (!empty($a->categories)) {
+        // ActiveSync categories are an array; keep labels containing spaces.
+        if (isset($a->categories) || in_array('categories', $a->getUnsetVars() ?? [], true)) {
             $cats = [];
-            $catList = is_array($a->categories) ? $a->categories : explode(' ', $a->categories);
+            $catList = is_array($a->categories) ? $a->categories : [$a->categories ?? ''];
             foreach ($catList as $cat) {
                 $cat = trim($cat);
                 if ($cat !== '') $cats[$cat] = true;
             }
-            if ($cats) $event['categories'] = $cats;
+            $event['keywords'] = $cats ?: null;
         }
 
         return $event;
@@ -279,42 +301,68 @@ class JmapCalendarConverter {
     // -------------------------------------------------------------------------
 
     public static function eventModHash(array $event): string {
-        $startTs = self::jmapTimeToTimestamp($event['start'] ?? '');
-        $key = ($event['title'] ?? '') .
-               $startTs .
-               ($event['duration'] ?? '') .
-               ($event['description'] ?? '') .
-               (($event['locations'][array_key_first($event['locations'] ?? [])]['name'] ?? ''));
-        foreach ($event['participants'] ?? [] as $p) {
-            $key .= '|p:' . ($p['name'] ?? '') . ':' . ($p['email'] ?? '') .
-                    ':' . ($p['participationStatus'] ?? '');
+        $values = [];
+        foreach (['title', 'start', 'timeZone', 'duration', 'description', 'locations',
+                  'participants', 'organizerCalendarAddress', 'privacy', 'freeBusyStatus',
+                  'keywords', 'showWithoutTime', 'alerts', 'updated'] as $property) {
+            $values[$property] = $event[$property] ?? null;
         }
-        $key .= '|priv:' . ($event['privacy'] ?? 'public');
-        $key .= '|fb:' . ($event['freeBusyStatus'] ?? 'busy');
-        foreach (array_keys($event['categories'] ?? []) as $cat) {
-            $key .= '|cat:' . $cat;
+        $values['recurrenceRule'] = $event['recurrenceRule'] ?? $event['recurrenceRules'][0] ?? null;
+        // Version the fingerprint so already-synced items receive the corrected
+        // field mapping once, even if Stalwart's updated timestamp is unchanged.
+        return sprintf('%08x', crc32('v2|' . json_encode($values)));
+    }
+
+    private static function calendarAddressToEmail(string $address): string {
+        $address = trim($address);
+        if (stripos($address, 'mailto:') === 0) {
+            $address = rawurldecode(explode('?', substr($address, 7), 2)[0]);
+        } elseif (str_contains($address, ':')) {
+            return ''; // e.g. a urn:uuid participant without an email address
         }
-        if (!empty($event['recurrenceRules'])) {
-            $key .= '|rr:' . count($event['recurrenceRules']);
+        return str_contains($address, '@') ? $address : '';
+    }
+
+    private static function participantEmail(array $participant): string {
+        foreach ([$participant['calendarAddress'] ?? '', $participant['email'] ?? '', $participant['sendTo']['imip'] ?? ''] as $address) {
+            $email = self::calendarAddressToEmail($address);
+            if ($email !== '') return $email;
         }
-        $key .= '|allday:' . (!empty($event['showWithoutTime']) ? '1' : '0');
-        foreach ($event['alerts'] ?? [] as $al) {
-            $key .= '|alert:' . ($al['trigger']['offset'] ?? '');
+        return '';
+    }
+
+    private static function preserveParticipantIds(array $participants, array $existing): array {
+        $result = [];
+        foreach ($participants as $key => $participant) {
+            $email = self::participantEmail($participant);
+            foreach ($existing as $oldKey => $old) {
+                if (!isset($result[$oldKey]) && strcasecmp($email, self::participantEmail($old)) === 0) {
+                    $result[$oldKey] = array_merge($old, $participant);
+                    continue 2;
+                }
+            }
+            while (isset($existing[$key]) || isset($result[$key])) $key .= '_';
+            $result[$key] = $participant;
         }
-        $key .= '|' . ($event['updated'] ?? '');
-        return sprintf('%08x', crc32($key));
+        return $result;
     }
 
     // -------------------------------------------------------------------------
     // Recurrence helpers
     // -------------------------------------------------------------------------
 
-    private static function jmapRuleToSyncRecurrence(array $rule): SyncRecurrence {
+    private static function jmapRuleToSyncRecurrence(array $rule, string $tz): SyncRecurrence {
         $r = new SyncRecurrence();
 
         $freq   = strtolower($rule['frequency'] ?? 'daily');
         $byDay  = $rule['byDay']      ?? [];
         $byPos  = $rule['bySetPosition'] ?? [];
+
+        // JSCalendar can express the ordinal directly on NDay (e.g. last
+        // Monday), or through bySetPosition. ActiveSync uses weekofmonth.
+        if (!$byPos && count($byDay) === 1 && isset($byDay[0]['nthOfPeriod'])) {
+            $byPos = [(int)$byDay[0]['nthOfPeriod']];
+        }
 
         // Monthly nth-day vs plain monthly
         if ($freq === 'monthly' && $byDay && $byPos) {
@@ -336,7 +384,7 @@ class JmapCalendarConverter {
         if (!empty($rule['count'])) {
             $r->occurrences = (int)$rule['count'];
         } elseif (!empty($rule['until'])) {
-            $r->until = self::localToTimestamp($rule['until'], 'UTC');
+            $r->until = self::localToTimestamp($rule['until'], $tz);
         }
 
         // Day-of-week bitmask
@@ -360,7 +408,7 @@ class JmapCalendarConverter {
         return $r;
     }
 
-    private static function syncRecurrenceToJmap(SyncRecurrence $r): ?array {
+    private static function syncRecurrenceToJmap(SyncRecurrence $r, string $tz): ?array {
         $type = (int)($r->type ?? 0);
         $rule = [
             '@type'     => 'RecurrenceRule',
@@ -378,7 +426,8 @@ class JmapCalendarConverter {
         if (!empty($r->occurrences)) {
             $rule['count'] = (int)$r->occurrences;
         } elseif (!empty($r->until)) {
-            $rule['until'] = gmdate('Y-m-d', $r->until);
+            $rule['until'] = (new \DateTimeImmutable('@' . $r->until))
+                ->setTimezone(new \DateTimeZone($tz))->format('Y-m-d\TH:i:s');
         }
 
         if (!empty($r->dayofweek)) {
@@ -394,7 +443,7 @@ class JmapCalendarConverter {
             }
             $rule['byDay'] = $byDay;
             if (!empty($r->weekofmonth)) {
-                $rule['bySetPosition'] = [$r->weekofmonth === 5 ? -1 : (int)$r->weekofmonth];
+                $rule['bySetPosition'] = [(int)$r->weekofmonth === 5 ? -1 : (int)$r->weekofmonth];
             }
         }
 

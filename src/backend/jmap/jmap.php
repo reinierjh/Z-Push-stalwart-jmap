@@ -1941,7 +1941,7 @@ class BackendJmap extends BackendDiff {
                 ['CalendarEvent/get', [
                     'accountId'  => $this->accountId,
                     'ids'        => $chunk,
-                    'properties' => ['id', 'title', 'start', 'duration', 'description', 'locations', 'participants', 'privacy', 'freeBusyStatus', 'categories', 'recurrenceRules', 'showWithoutTime', 'alerts', 'updated'],
+                    'properties' => ['id', 'title', 'start', 'timeZone', 'duration', 'description', 'locations', 'participants', 'organizerCalendarAddress', 'privacy', 'freeBusyStatus', 'keywords', 'recurrenceRule', 'showWithoutTime', 'alerts', 'updated'],
                 ], 'g'],
             ], [JmapClient::CAP_CORE, JmapClient::CAP_CALENDARS]);
             $events = array_merge($events, $r[0][1]['list'] ?? []);
@@ -1987,7 +1987,7 @@ class BackendJmap extends BackendDiff {
             ['CalendarEvent/get', [
                 'accountId'  => $this->accountId,
                 'ids'        => [$id],
-                'properties' => ['id', 'title', 'start', 'duration', 'description', 'locations', 'participants', 'privacy', 'freeBusyStatus', 'categories', 'recurrenceRules', 'showWithoutTime', 'alerts', 'updated'],
+                'properties' => ['id', 'title', 'start', 'timeZone', 'duration', 'description', 'locations', 'participants', 'organizerCalendarAddress', 'privacy', 'freeBusyStatus', 'keywords', 'recurrenceRule', 'showWithoutTime', 'alerts', 'updated'],
             ], '0'],
         ], [JmapClient::CAP_CORE, JmapClient::CAP_CALENDARS]);
 
@@ -2011,11 +2011,11 @@ class BackendJmap extends BackendDiff {
     }
 
     private function saveCalendarEvent(string $calId, ?string $id, SyncAppointment $appt): string|false {
-        $event = JmapCalendarConverter::syncAppointmentToEvent($appt, $calId);
+        $existing = $id ? $this->fetchCalendarEvent($id) : null;
+        $event = JmapCalendarConverter::syncAppointmentToEvent($appt, $calId, $existing);
 
         if ($id) {
-            // Fetch existing event to preserve server-only fields
-            $existing = $this->fetchCalendarEvent($id);
+            // Preserve server-only fields such as recurrence overrides.
             if ($existing !== null) {
                 foreach ($existing as $k => $v) {
                     if (!array_key_exists($k, $event)) {
