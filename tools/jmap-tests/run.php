@@ -166,6 +166,7 @@ $tests['photo identity participates in contact change detection'] = function () 
 };
 
 require __DIR__ . '/calendar.php';
+require __DIR__ . '/mail.php';
 
 $failed = 0;
 foreach ($tests as $name => $test) {
