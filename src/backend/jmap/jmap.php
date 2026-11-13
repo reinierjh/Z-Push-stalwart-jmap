@@ -1716,31 +1716,36 @@ class BackendJmap extends BackendDiff {
             ));
         }
 
-        // Read contact photo from `media` (Stalwart) or `photos` (JSContact standard).
-        // Stalwart stores photos as data URIs: data:image/jpeg;base64,<base64data>
-        $photoEntry = null;
-        if (!empty($card['media'])) {
-            $photoEntry = reset($card['media']);
-        } elseif (!empty($card['photos'])) {
-            $photoEntry = reset($card['photos']);
-        }
-
-        if ($photoEntry && !empty($photoEntry['uri'])) {
-            $commaPos = strpos($photoEntry['uri'], ',');
-            if ($commaPos !== false) {
-                $rawBase64 = substr($photoEntry['uri'], $commaPos + 1);
-                try {
-                    $rawData = base64_decode($rawBase64, true);
-                    if ($rawData !== false) {
-                        $contact->picture = self::processContactPhoto($rawData);
-                    }
-                } catch (\Throwable $e) {
-                    ZLog::Write(LOGLEVEL_WARN, sprintf(
-                        'BackendJmap->getContact(): photo processing failed for %s, using original: %s',
-                        $id, $e->getMessage()
-                    ));
-                    $contact->picture = $rawBase64;
+        // Stalwart 1.x exposes embedded photos as blobs. Older cards may still
+        // contain data URIs. Never mistake a logo or sound for the contact photo.
+        $media = $card['media'] ?? $card['photos'] ?? [];
+        foreach ($media as $photoEntry) {
+            if (!is_array($photoEntry) || strtolower($photoEntry['kind'] ?? 'photo') !== 'photo') {
+                continue;
+            }
+            try {
+                $rawData = false;
+                if (!empty($photoEntry['blobId'])) {
+                    // Use the account that returned the card, not the mail
+                    // account default of downloadBlob().
+                    $rawData = $this->client->downloadBlob(
+                        $photoEntry['blobId'],
+                        'contact-photo',
+                        $photoEntry['mediaType'] ?? 'application/octet-stream',
+                        $r[0][1]['accountId'] ?? $this->accountId
+                    );
+                } elseif (preg_match('/^data:image\/[^;,]+(?:;[^,]*)?;base64,(.*)$/is', $photoEntry['uri'] ?? '', $match)) {
+                    $rawData = base64_decode($match[1], true);
                 }
+                if (is_string($rawData) && $rawData !== '') {
+                    $contact->picture = self::processContactPhoto($rawData);
+                    break;
+                }
+            } catch (\Throwable $e) {
+                ZLog::Write(LOGLEVEL_WARN, sprintf(
+                    'BackendJmap->getContact(): photo download failed for %s: %s',
+                    $id, $e->getMessage()
+                ));
             }
         }
 
@@ -1779,7 +1784,7 @@ class BackendJmap extends BackendDiff {
         $card = JmapContactConverter::syncContactToCard($contact, $abId);
 
         // Handle contact picture: set, update, or remove.
-        // Stalwart stores photos as data URIs under `media`, not `photos` (JSContact standard).
+        // Data URIs remain accepted on writes, also when GET returns blobIds.
         if (isset($contact->picture)) {
             if ($contact->picture !== '' && $contact->picture !== null) {
                 try {
@@ -1823,7 +1828,14 @@ class BackendJmap extends BackendDiff {
             // properties etc.) are preserved even if the device didn't send them.
             $existing = $this->fetchContactCard($id);
             if ($existing !== null) {
+                $photoChanged = array_key_exists('media', $card);
+                $photo = !empty($card['media']) ? reset($card['media']) : null;
                 $card = self::mergeJmapPatch($existing, $card);
+                if ($photoChanged) {
+                    // Do not deep-merge a new URI with an old blobId, or leave
+                    // stale photos under other keys. Preserve logos and sounds.
+                    $card['media'] = self::replaceContactPhoto($existing['media'] ?? [], $photo);
+                }
             }
 
             $r = $this->client->call([
@@ -2758,6 +2770,30 @@ class BackendJmap extends BackendDiff {
         if (str_starts_with($data, "RIFF") && substr($data, 8, 4) === "WEBP") return 'image/webp';
         if (str_starts_with($data, "BM")) return 'image/bmp';
         return 'image/jpeg';
+    }
+
+    /**
+     * ActiveSync has one photo slot. Replace only photos, preserving other
+     * media and reusing the first photo's key when possible.
+     */
+    private static function replaceContactPhoto(array $media, ?array $photo): ?array {
+        $photoKey = null;
+        foreach ($media as $key => $entry) {
+            if (strtolower($entry['kind'] ?? 'photo') === 'photo') {
+                $photoKey ??= $key;
+                unset($media[$key]);
+            }
+        }
+        if ($photo !== null) {
+            if ($photoKey === null) {
+                $photoKey = 'p1';
+                while (array_key_exists($photoKey, $media)) {
+                    $photoKey .= '_';
+                }
+            }
+            $media[$photoKey] = $photo;
+        }
+        return $media ?: null;
     }
 
     /**
