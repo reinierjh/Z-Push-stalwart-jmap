@@ -165,6 +165,8 @@ $tests['photo identity participates in contact change detection'] = function () 
     same(false, JmapContactConverter::cardModHash($before) === JmapContactConverter::cardModHash($after));
 };
 
+require __DIR__ . '/calendar.php';
+
 $failed = 0;
 foreach ($tests as $name => $test) {
     try {
