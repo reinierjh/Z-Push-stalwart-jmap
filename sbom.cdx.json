@@ -23,7 +23,8 @@
     },
     "properties": [
       { "name": "inventory:source-commit", "value": "12124620cafa58c8cd28f8ee533d147621bb3d5a" },
-      { "name": "inventory:scope", "value": "Source and deploy content under src/ at the recorded commit; manually identified bundled code, not a complete file-by-file or license audit." },
+      { "name": "inventory:source-tree", "value": "746ab567efada200b9bffee17ae7d72ef123614f" },
+      { "name": "inventory:scope", "value": "Source and deploy content under src/ at the recorded source tree; manually identified bundled code, not a complete file-by-file or license audit." },
       { "name": "inventory:limitations", "value": "No lockfile, system, server, PHP runtime or installed deployment inventory is asserted. composer.json declares PHP >=7.4.0 but is not evidence of a bundled or installed PHP version. Presence does not establish runtime use or a complete dependency graph." },
       { "name": "inventory:versions", "value": "PEAR references are upstream baselines explicitly cited in source headers, not versions of unmodified installed packages; local code is changed. Unknown versions are omitted." }
     ]

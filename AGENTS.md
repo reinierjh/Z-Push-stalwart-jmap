@@ -36,6 +36,12 @@ Elke volgende update:
 - Bekende fix: raw MIME alleen leveren als `mimeIsClean()`; anders `buildCleanMime()` (UTF-8 MIME uit JMAP bodyValues). Zie `src/backend/jmap/jmap.php`.
 - Linten kan met `php -l <file>` (of de gegenereerde lint-run vanuit de repo).
 
+## SBOM bijhouden
+
+- Controleer bij iedere wijziging of componenten, afhankelijkheden, versies, licenties of de inventarisatiescope veranderen en werk zo nodig `sbom.cdx.json` en `SBOM.md` bij in dezelfde commit.
+- Bij elke wijziging onder `src/`: werk ook de `inventory:source-tree`-waarde bij naar de Git-treehash van de gestagede `src/` (`git rev-parse "$(git write-tree):src"`). Verwijder een verouderde `inventory:source-commit`; een commit kan zijn eigen hash niet bevatten. Pas een genoemde broncommit in `SBOM.md` overeenkomstig aan.
+- Valideer de SBOM als JSON en zo mogelijk tegen het CycloneDX 1.6-schema. Claim geen onbekende versies of niet-gecontroleerde geïnstalleerde afhankelijkheden.
+
 ## Contributen (upstream Z-Push regels)
 
 - PRs en issues indienen via https://github.com/Z-Hub/Z-Push (of de desbetreffende fork-keten).
