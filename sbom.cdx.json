@@ -1,0 +1,160 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "bom-ref": "z-push-source",
+      "name": "Z-Push",
+      "version": "2.7.3",
+      "description": "Z-Push source and deploy tree, including the JMAP backend; version from src/version.",
+      "licenses": [
+        {
+          "license": {
+            "name": "GNU AGPL version 3 with additional trademark terms"
+          }
+        }
+      ],
+      "properties": [
+        { "name": "inventory:path", "value": "src/" },
+        { "name": "inventory:license-evidence", "value": "src/LICENSE contains the AGPL v3 text; src/include/z_RTF.php and other application headers state additional section 7 trademark terms. This license name does not describe the separate licenses of bundled third-party files." }
+      ]
+    },
+    "properties": [
+      { "name": "inventory:source-commit", "value": "12124620cafa58c8cd28f8ee533d147621bb3d5a" },
+      { "name": "inventory:scope", "value": "Source and deploy content under src/ at the recorded commit; manually identified bundled code, not a complete file-by-file or license audit." },
+      { "name": "inventory:limitations", "value": "No lockfile, system, server, PHP runtime or installed deployment inventory is asserted. composer.json declares PHP >=7.4.0 but is not evidence of a bundled or installed PHP version. Presence does not establish runtime use or a complete dependency graph." },
+      { "name": "inventory:versions", "value": "PEAR references are upstream baselines explicitly cited in source headers, not versions of unmodified installed packages; local code is changed. Unknown versions are omitted." }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "composer-autoloader",
+      "name": "Composer autoloader",
+      "description": "Bundled Composer class loader and generated autoload files; Composer release version not established.",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/vendor/autoload.php" },
+        { "name": "inventory:path", "value": "src/vendor/composer/" },
+        { "name": "inventory:license-evidence", "value": "src/vendor/composer/LICENSE" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-mail-mimedecode-modified",
+      "name": "PEAR Mail_mimeDecode (modified source)",
+      "description": "Locally modified MIME decoder; the upstream version is a reference implementation, not a verified package version of this code.",
+      "licenses": [{ "license": { "name": "BSD 3-clause style (see source header)" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/include/mimeDecode.php" },
+        { "name": "inventory:upstream-reference", "value": "Mail_mimeDecode 1.5.6: http://download.pear.php.net/package/Mail_mimeDecode-1.5.6.tgz" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-mail-mime-modified",
+      "name": "PEAR Mail_Mime mimePart (modified source)",
+      "description": "Locally modified MIME part implementation, not the complete upstream package.",
+      "licenses": [{ "license": { "name": "BSD 3-clause style (see source header)" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/backend/imap/mimePart.php" },
+        { "name": "inventory:upstream-reference", "value": "Mail_Mime 1.8.9: http://download.pear.php.net/package/Mail_Mime-1.8.9.tgz" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-mail-modified",
+      "name": "PEAR Mail (modified source)",
+      "description": "Locally modified Mail interface, RFC822 parser and mail transport implementations; not an unmodified upstream package.",
+      "licenses": [{ "license": { "id": "BSD-3-Clause" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/include/z_RFC822.php" },
+        { "name": "inventory:path", "value": "src/backend/imap/Mail.php" },
+        { "name": "inventory:path", "value": "src/backend/imap/Mail/mail.php" },
+        { "name": "inventory:path", "value": "src/backend/imap/Mail/sendmail.php" },
+        { "name": "inventory:path", "value": "src/backend/imap/Mail/smtp.php" },
+        { "name": "inventory:upstream-reference", "value": "Mail 2.0.0: https://github.com/pear/Mail/tree/v2.0.0" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-auth-sasl-modified",
+      "name": "PEAR Auth_SASL (bundled source)",
+      "description": "SASL implementations including locally modified files; the referenced release is not asserted for every file.",
+      "licenses": [{ "license": { "name": "BSD 3-clause style (see individual source headers)" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/backend/imap/Auth/SASL.php" },
+        { "name": "inventory:path", "value": "src/backend/imap/Auth/SASL/" },
+        { "name": "inventory:upstream-reference", "value": "Auth_SASL 1.0.6: http://download.pear.php.net/package/Auth_SASL-1.0.6.tgz; cited in SASL.php and Common.php only." }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-net-smtp-modified",
+      "name": "PEAR Net_SMTP (modified source)",
+      "licenses": [{ "license": { "id": "BSD-2-Clause" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/backend/imap/Net/SMTP.php" },
+        { "name": "inventory:upstream-reference", "value": "Net_SMTP 1.6.2: http://download.pear.php.net/package/Net_SMTP-1.6.2.tgz; header also cites upstream commit 558b92f5c2ecbb857094a3926a100e51211a08c2." }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pear-net-socket-modified",
+      "name": "PEAR Net_Socket (modified source)",
+      "licenses": [{ "license": { "id": "BSD-2-Clause" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/backend/imap/Net/Socket.php" },
+        { "name": "inventory:upstream-reference", "value": "Net_Socket 1.0.14: http://download.pear.php.net/package/Net_Socket-1.0.14.tgz" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "awl-icalendar",
+      "name": "AWL iCalendar classes",
+      "description": "Bundled iCalendar source identified as AWL; release version unknown.",
+      "licenses": [{ "license": { "id": "GPL-2.0-or-later" } }],
+      "properties": [{ "name": "inventory:path", "value": "src/include/iCalendar.php" }]
+    },
+    {
+      "type": "library",
+      "bom-ref": "caldav-client",
+      "name": "CalDAV client",
+      "description": "Client based on caldav-client-v2.php with reused cURL code and other changes; release version unknown.",
+      "licenses": [{ "license": { "id": "LGPL-3.0-or-later" } }],
+      "properties": [{ "name": "inventory:path", "value": "src/include/z_caldav.php" }]
+    },
+    {
+      "type": "library",
+      "bom-ref": "carddav-client",
+      "name": "CardDAV PHP client",
+      "description": "Bundled CardDAV client; header and class constant give different version strings, so the exact release is uncertain.",
+      "licenses": [{ "license": { "id": "AGPL-3.0-or-later" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/include/z_carddav.php" },
+        { "name": "inventory:version-evidence", "value": "Header @version 0.6; class constant VERSION is 0.6.c." }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "rtfclass",
+      "name": "rtfclass",
+      "description": "Rich Text Format parsing class by Markus Fischer; release version unknown.",
+      "licenses": [{ "license": { "name": "GNU AGPLv3 (only or later not specified in header)" } }],
+      "properties": [
+        { "name": "inventory:path", "value": "src/include/rtfclass.php" },
+        { "name": "inventory:upstream", "value": "https://github.com/mfn/rtfclass" }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "z-rtf-extension",
+      "name": "z_RTF",
+      "description": "Z-Push RTF extension of rtfclass with decompression code described as ported from Java; original Java source and version not identified in the header.",
+      "licenses": [{ "license": { "name": "GNU AGPL version 3 with additional trademark terms" } }],
+      "properties": [{ "name": "inventory:path", "value": "src/include/z_RTF.php" }]
+    }
+  ]
+}
