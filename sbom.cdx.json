@@ -7,8 +7,8 @@
       "type": "application",
       "bom-ref": "z-push-source",
       "name": "Z-Push",
-      "version": "2.7.3",
-      "description": "Z-Push source and deploy tree, including the JMAP backend; version from src/version.",
+      "version": "2.7.7",
+      "description": "Z-Push source and deploy tree, including the JMAP backend; version from src/version. The tree is the upstream 2.7.x development line with the upstream 2.7.7 release merged in, plus local JMAP changes.",
       "licenses": [
         {
           "license": {
@@ -22,8 +22,7 @@
       ]
     },
     "properties": [
-      { "name": "inventory:source-commit", "value": "12124620cafa58c8cd28f8ee533d147621bb3d5a" },
-      { "name": "inventory:source-tree", "value": "746ab567efada200b9bffee17ae7d72ef123614f" },
+      { "name": "inventory:source-tree", "value": "7b72f81232bbacf38cb1c99185ec914575ff6b05" },
       { "name": "inventory:scope", "value": "Source and deploy content under src/ at the recorded source tree; manually identified bundled code, not a complete file-by-file or license audit." },
       { "name": "inventory:limitations", "value": "No lockfile, system, server, PHP runtime or installed deployment inventory is asserted. composer.json declares PHP >=7.4.0 but is not evidence of a bundled or installed PHP version. Presence does not establish runtime use or a complete dependency graph." },
       { "name": "inventory:versions", "value": "PEAR references are upstream baselines explicitly cited in source headers, not versions of unmodified installed packages; local code is changed. Unknown versions are omitted." }

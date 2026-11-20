@@ -42,6 +42,30 @@ Elke volgende update:
 - Bij elke wijziging onder `src/`: werk ook de `inventory:source-tree`-waarde bij naar de Git-treehash van de gestagede `src/` (`git rev-parse "$(git write-tree):src"`). Verwijder een verouderde `inventory:source-commit`; een commit kan zijn eigen hash niet bevatten. Pas een genoemde broncommit in `SBOM.md` overeenkomstig aan.
 - Valideer de SBOM als JSON en zo mogelijk tegen het CycloneDX 1.6-schema. Claim geen onbekende versies of niet-gecontroleerde geïnstalleerde afhankelijkheden.
 
+## Upstream Z-Push bijwerken
+
+Deze repo is een fork van depeo's Stalwart-JMAP-fork. Die fork staat op de upstream **ontwikkelbranch `2.7.x`** (2.7.3 plus dev-commits, o.a. Find-support), niet op een release. De upstream releases 2.7.4–2.7.7 zijn maintenance-branches die vanaf 2.7.3 zijn afgesplitst en alleen fixes backporten.
+
+Gevolg: `src/version` noemt de laatst gemergede upstream release, maar de tree bevat ook de `2.7.x`-devfeatures en de JMAP-laag. Geen enkele upstream-commit beschrijft de tree; de `inventory:source-tree`-hash in de SBOM is leidend.
+
+Nooit bestanden overschrijven (geen tarball/rsync van upstream over `src/`): dat wist `src/backend/jmap/` en de core-patches. Altijd mergen.
+
+Eenmalig:
+
+1. `git remote add zhub https://github.com/Z-Hub/Z-Push.git`
+2. Optioneel, voor fixes van depeo: `git remote add depeo https://github.com/depeo/Z-Push-stalwart-jmap.git`
+
+Per upstream release:
+
+1. `git fetch zhub --tags`
+2. `git merge <tag>` (bv. `git merge 2.7.7`) op `develop`
+3. Conflicten: upstream-fix overnemen waar die een fork-patch vervangt of omvat (zoals de PHP 8-guards in `streamer.php`); beide kanten houden als ze onafhankelijk zijn (zoals `ICONV_OPTION` en `DAV_SSL_VERIFY`). JMAP-gedrag nooit laten vallen.
+4. `php -l` op elk gewijzigd bestand en `php tools/jmap-tests/run.php`.
+5. Nieuwe config-opties uit upstream handmatig in de server-`config.php` zetten; die valt buiten de rsync-deploy.
+6. SBOM bijwerken, committen, pushen, deployen volgens de deploy-procedure hierboven.
+
+Niet doen: rebasen (herschrijft 100+ commits en herhaalt alle conflicten per release), `git pull` van upstream `2.7.x` (dat is de dev-branch, geen release), of losse bestanden kopiëren.
+
 ## Contributen (upstream Z-Push regels)
 
 - PRs en issues indienen via https://github.com/Z-Hub/Z-Push (of de desbetreffende fork-keten).

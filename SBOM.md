@@ -1,6 +1,6 @@
 # Software Bill of Materials
 
-`sbom.cdx.json` is a manually compiled SBOM in CycloneDX 1.6 format. It covers the source code shipped under `src/`, including backends that may not be active in a particular installation. The Git tree hash of `src/` is recorded in the SBOM as `inventory:source-tree`; the original inventory covers commit `12124620cafa58c8cd28f8ee533d147621bb3d5a`. The SBOM is a snapshot and does not guarantee that all copied code has been identified.
+`sbom.cdx.json` is a manually compiled SBOM in CycloneDX 1.6 format. It covers the source code shipped under `src/`, including backends that may not be active in a particular installation. The Git tree hash of `src/` is recorded in the SBOM as `inventory:source-tree` (currently `7b72f81232bbacf38cb1c99185ec914575ff6b05`). The tree combines the upstream Z-Push `2.7.x` development line, the upstream `2.7.7` release and local JMAP changes, so no single upstream commit identifies it; the tree hash is authoritative. The SBOM is a snapshot and does not guarantee that all copied code has been identified.
 
 Versions of modified libraries may refer to the original implementation and do not mean that the code is identical to that upstream release. Unknown versions are omitted. License information is indicative; also consult the license texts in the source files and `LICENSE`, including the additional trademark terms.
 
