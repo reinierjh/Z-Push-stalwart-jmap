@@ -30,6 +30,38 @@ Elke volgende update:
 2. `rsync -a --delete --chown=www-data:www-data --exclude '/config.php' --exclude '/backend/jmap/config.php' /opt/z-push-git/src/ /usr/share/z-push/`
 3. `sudo systemctl restart php8.2-fpm`
 
+## Server-tuning (php8.2-fpm)
+
+De FPM-pool is géén onderdeel van de repo en wordt dus niet door de rsync-deploy meegenomen; pas hem handmatig aan in `/etc/php/8.2/fpm/pool.d/www.conf`.
+
+Symptoom dat hieraan voorafging: Z-Push "gebruikte" 8 GB en liet de server met 6 GB omvallen. Twee oorzaken, beide in de pool:
+
+1. `pm = static` met `pm.max_children = 50` (het bestand bevatte dubbele `pm`-directives; de laatste wint). Daardoor staan er permanent 50 workers klaar, elk ~162 MB RSS.
+2. `memory_limit = -1`. Z-Push leest die waarde en breekt een folder-sync af bij 90% ervan (`Request::IsRequestMemoryLimitReached()`, gebruikt in `lib/request/sync.php`). Met `-1` staat die chunking uit en loopt één verzoek door tot het proces of het systeem omvalt.
+
+Werkende configuratie (achteraan `www.conf`, alle bestaande `pm`-regels uitcommentariëren met `sed -i 's/^pm/;pm/'`):
+
+```ini
+pm = ondemand
+pm.max_children = 25
+pm.process_idle_timeout = 10s
+pm.max_requests = 500
+php_admin_value[memory_limit] = 256M
+```
+
+- `ondemand` laat workers na 10 s idle sterven: rust ≈ 3 processen / 0,3 GB in plaats van 51 / 8,1 GB.
+- `max_children = 25` past bij 7 devices; iOS opent meerdere parallelle verzoeken per device (tot ~7 gezien). 25 × 162 MB ≈ 4 GB plafond. Lager (15) kan, maar dan ontstaan wachtrijen en 504's tijdens een full sync.
+- `memory_limit = 256M` zet de chunking-guard op ~230 MB. Een full sync wordt dan in meer, kleinere verzoeken geknipt; `memory='…/230.00 MiB'` in de log is de guard die aanslaat, geen fout.
+- `php_admin_value` geldt alleen voor FPM, niet voor de CLI, dus `z-push-admin` en `tools/jmap-tests/run.php` blijven ongemoeid.
+
+Meten onder belasting (niet in rust):
+
+```sh
+ps -o rss= -C php-fpm8.2 | awk '{s+=$1;n++} END {printf "kinderen=%d totaal=%.1f GB gem=%.0f MB\n", n, s/1048576, (n?s/n/1024:0)}'
+```
+
+Verwacht in rust 1–3 kinderen / <0,5 GB, tijdens een full sync 5–15 kinderen / 1–2,5 GB. Verlaag de VM pas naar 6 GB nadat een volledige sync met deze instellingen is geslaagd.
+
 ## Project-achtergrond
 
 - Z-Push met JMAP-backend tegen Stalwart.
