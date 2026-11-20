@@ -345,7 +345,12 @@ class BackendJmap extends BackendDiff {
     }
 
     private function readPersistedEmailState(): string {
-        $v = @file_get_contents($this->emailStateFilePath());
+        $path = $this->emailStateFilePath();
+        // A missing file is the normal "no state yet" case. Z-Push's error
+        // handler logs E_WARNING at WARN level even when suppressed with @, so
+        // probe first instead of letting file_get_contents() complain.
+        if (!is_file($path)) return '';
+        $v = @file_get_contents($path);
         return $v !== false ? $v : '';
     }
 
@@ -1038,6 +1043,10 @@ class BackendJmap extends BackendDiff {
      */
     private function mailCacheLoad(string $jid, int $cutoffdate): array|false {
         $path = $this->mailCachePath($jid, $cutoffdate);
+        // Cache misses are routine: the files are only ever created by
+        // mailCacheSave() and never unlinked. Z-Push's error handler logs
+        // E_WARNING at WARN level even when suppressed with @, so probe first.
+        if (!is_file($path)) return false;
         $raw  = @file_get_contents($path);
         if ($raw === false) return false;
         // PHP serialize is considerably faster than json_decode for the large
